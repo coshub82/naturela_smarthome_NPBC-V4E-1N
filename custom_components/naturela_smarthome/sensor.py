@@ -25,6 +25,7 @@ from .const import (
     MODEL,
     STATUS_NAMES,
     STATUS_OPTIONS,
+    fuel_to_display_value,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -215,6 +216,14 @@ async def async_setup_entry(
         NaturelaSensor(coordinator, device_id, desc)
         for desc in SENSORS
     ]
+
+    fuel_profiles = (coordinator.data or {}).get("Fuels") if coordinator.data else []
+    if fuel_profiles:
+        entities.extend(
+            NaturelaFuelSettingsSensor(coordinator, device_id, idx)
+            for idx in range(len(fuel_profiles))
+        )
+
     async_add_entities(entities)
 
 
@@ -398,3 +407,85 @@ class NaturelaSensor(_NaturelaEntityBase, SensorEntity):
             except (TypeError, ValueError):
                 return value
         return value
+
+
+class NaturelaFuelSettingsSensor(_NaturelaEntityBase, SensorEntity):
+    """Expose one complete pellet fuel profile as a HA sensor with all settings as attributes."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:fire"
+
+    def __init__(self, coordinator, device_id: int, fuel_index: int) -> None:
+        super().__init__(coordinator, device_id)
+        self._fuel_index = fuel_index
+        self._attr_unique_id = f"{DOMAIN}_{device_id}_fuel_{fuel_index}_settings"
+        self._attr_name = f"Fuel {fuel_index + 1} settings"
+
+    def _fuel_profile(self) -> dict | None:
+        if not self.coordinator.data:
+            return None
+        fuels = self.coordinator.data.get("Fuels") or []
+        if not fuels or self._fuel_index >= len(fuels):
+            return None
+        return fuels[self._fuel_index]
+
+    @property
+    def native_value(self):
+        fuel = self._fuel_profile()
+        if fuel is None:
+            return None
+        fuel_type = int(fuel.get("FuelType", self._fuel_index))
+        return f"Fuel {fuel_to_display_value(fuel_type)}"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        fuel = self._fuel_profile()
+        if fuel is None:
+            return {}
+
+        fuel_type = int(fuel.get("FuelType", self._fuel_index))
+        attrs: dict[str, object] = {
+            "fuel_type": fuel_to_display_value(fuel_type),
+            "fuel_type_raw": fuel_type,
+            "ci_start_fm": fuel.get("CiStartFM"),
+            "ci_stop_fm": fuel.get("CiStopFM"),
+            "ci_alarm_fm": fuel.get("CiAlarmFM"),
+            "auto_clean_time": fuel.get("AutoCleanTime"),
+            "ci_start_fc": fuel.get("CiStartFC"),
+            "ci_stop_fc": fuel.get("CiStopFC"),
+            "ci_alarm_fc": fuel.get("CiAlarmFC"),
+            "auto_clean": fuel.get("AutoClean"),
+            "intermediate_clean": fuel.get("IntermediateClean"),
+            "use_fan_on_int_clean": fuel.get("UseFanOnIntClean"),
+            "change_fan_speed": fuel.get("ChangeFanSpeed"),
+            "burn_retr": fuel.get("BurnRetr"),
+            "burn_fd_feed": fuel.get("Burn_FDFeed"),
+            "burn_exh_fan": fuel.get("Burn_ExhFan"),
+            "ign_heat": fuel.get("IgnHeat"),
+            "ign_ph1_long": fuel.get("IgnPh1Long"),
+            "ign_ph2_long": fuel.get("IgnPh2Long"),
+            "ign_ph1_fan": fuel.get("IgnPh1Fan"),
+            "ign_ph2_fan": fuel.get("IgnPh2Fan"),
+            "stf_bfd_long": fuel.get("StfBFDLong"),
+            "stf_bfd_fan": fuel.get("StfBFDFan"),
+            "stf_bfd_exh_fan": fuel.get("StfBFDExhFan"),
+            "stf_p1_long": fuel.get("STFP1Long"),
+            "stf_p2_long": fuel.get("STFP2Long"),
+            "feed_cap": fuel.get("Feed_cap"),
+            "fuel_cal_v": fuel.get("FuelCalV"),
+            "ext_fan": fuel.get("Ext_Fan"),
+            "ext_efan": fuel.get("Ext_Efan"),
+            "ci_efan": fuel.get("CI_Efan"),
+            "ci_start_fan": fuel.get("CI_Start_Fan"),
+            "ci_stop_fan": fuel.get("CI_Stop_Fan"),
+            "ci_alarm_fan": fuel.get("CI_Alarm_Fan"),
+            "is_active_ash_cleaner": fuel.get("IsActiveAshCleaner"),
+            "ashc_cycle": fuel.get("AshC_Cycle"),
+            "ashc_long": fuel.get("AshC_Long"),
+            "power_level_1": fuel.get("PowerLevel1"),
+            "power_level_2": fuel.get("PowerLevel2"),
+            "power_level_3": fuel.get("PowerLevel3"),
+            "power_level_s": fuel.get("PowerLevelS"),
+            "power_level_interm": fuel.get("PowerLevelInterm"),
+        }
+        return attrs

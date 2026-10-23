@@ -20,6 +20,7 @@ from .const import (
     CONF_SCAN_INTERVAL,
     CONTROLLER_BURNER,
     CONTROLLER_BURNERTOUCH,
+    CONTROLLER_BURNER_V4E_1N,
     CONTROLLER_MODELS,
     DEFAULT_CONTROLLER,
     DEFAULT_SCAN_INTERVAL,
@@ -38,6 +39,10 @@ CONTROLLER_SELECTOR = SelectSelector(
             SelectOptionDict(
                 value=CONTROLLER_BURNER,
                 label=CONTROLLER_MODELS[CONTROLLER_BURNER],
+            ),
+            SelectOptionDict(
+                value=CONTROLLER_BURNER_V4E_1N,
+                label=CONTROLLER_MODELS[CONTROLLER_BURNER_V4E_1N],
             ),
         ],
         mode=SelectSelectorMode.DROPDOWN,

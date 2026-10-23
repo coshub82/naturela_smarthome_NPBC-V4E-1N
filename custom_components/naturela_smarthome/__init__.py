@@ -23,7 +23,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["climate", "sensor", "binary_sensor"]
+PLATFORMS = ["climate", "sensor", "binary_sensor", "select"]
 
 
 @dataclass

@@ -15,7 +15,19 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_DEVICE_ID, DOMAIN, MANUFACTURER, MODEL, STATE_OFF, STATE_ON, STATUS_NAMES
+from .const import (
+    CONF_DEVICE_ID,
+    DOMAIN,
+    MANUFACTURER,
+    MODEL,
+    STATE_OFF,
+    STATE_ON,
+    STATE_TIMER,
+    STATUS_NAMES,
+    get_fuel_from_state,
+    get_mode_from_state,
+    pack_state,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +44,7 @@ def _safe_temp(value):
 
 
 HVAC_MODES = [HVACMode.OFF, HVACMode.HEAT]
+PRESET_MODES = ["none", "timer"]
 
 # Status codes where the stove is actively running / starting up
 # 0=Stand-by, 1=Cleaning, 2=Burning, 3=Cool down, 4=Fault, 5=Suspend, 6=Cleaning
@@ -76,7 +89,9 @@ class NaturelaClimate(CoordinatorEntity, ClimateEntity):
         ClimateEntityFeature.TARGET_TEMPERATURE
         | ClimateEntityFeature.TURN_ON
         | ClimateEntityFeature.TURN_OFF
+        | ClimateEntityFeature.PRESET_MODE
     )
+    _attr_preset_modes = PRESET_MODES
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_min_temp = 30
     _attr_max_temp = 85
@@ -106,13 +121,19 @@ class NaturelaClimate(CoordinatorEntity, ClimateEntity):
     def _update_from_data(self, data: dict) -> None:
         """Update _attr_* from a data dict. Safe to call from __init__."""
         status = data.get("Status", 0)
-        state  = data.get("State", STATE_OFF)
-        if status in ACTIVE_STATUSES or state == STATE_ON:
+        state = data.get("State", STATE_OFF)
+        mode = get_mode_from_state(state)
+
+        if status in ACTIVE_STATUSES or state == STATE_ON or mode == 2:
             self._attr_hvac_mode = HVACMode.HEAT
-        else:
+        elif mode == 0:
             self._attr_hvac_mode = HVACMode.OFF
+        else:
+            self._attr_hvac_mode = HVACMode.HEAT
+
+        self._attr_preset_mode = "timer" if mode == 3 else "none"
         self._attr_current_temperature = _safe_temp(data.get("TempBoiler"))
-        self._attr_target_temperature  = _safe_temp(data.get("SetTemp"))
+        self._attr_target_temperature = _safe_temp(data.get("SetTemp"))
 
     def _handle_coordinator_update(self) -> None:
         """Called by the coordinator after every poll.
@@ -121,14 +142,15 @@ class NaturelaClimate(CoordinatorEntity, ClimateEntity):
         to OFF if the API still reports stand-by AND the state field is also 0.
         Once the stove enters an active status we clear the flag.
         """
-        data   = self.coordinator.data or {}
+        data = self.coordinator.data or {}
         status = data.get("Status", 0)
-        state  = data.get("State", STATE_OFF)
+        state = data.get("State", STATE_OFF)
+        mode = get_mode_from_state(state)
 
         if status in ACTIVE_STATUSES:
             # Stove is genuinely running -- clear the pending flag and set HEAT
             self._command_pending = False
-            self._attr_hvac_mode  = HVACMode.HEAT
+            self._attr_hvac_mode = HVACMode.HEAT
         elif self._command_pending:
             # Still waiting for the stove to start -- keep optimistic HEAT state
             _LOGGER.debug(
@@ -137,14 +159,16 @@ class NaturelaClimate(CoordinatorEntity, ClimateEntity):
             )
         else:
             # No pending command -- follow the API faithfully
-            if state == STATE_ON:
-                self._attr_hvac_mode = HVACMode.HEAT
-            else:
+            if mode == 0:
                 self._attr_hvac_mode = HVACMode.OFF
+            else:
+                self._attr_hvac_mode = HVACMode.HEAT
+
+        self._attr_preset_mode = "timer" if mode == 3 else "none"
 
         # Always update temperatures
         self._attr_current_temperature = _safe_temp(data.get("TempBoiler"))
-        self._attr_target_temperature  = _safe_temp(data.get("SetTemp"))
+        self._attr_target_temperature = _safe_temp(data.get("SetTemp"))
         if self.hass is not None:
             self.async_write_ha_state()
 
@@ -158,18 +182,27 @@ class NaturelaClimate(CoordinatorEntity, ClimateEntity):
         if not self.coordinator.data:
             return {}
         d = self.coordinator.data
+        mode = get_mode_from_state(d.get("State", STATE_OFF))
+        if mode == 0:
+            mode_name = "OFF"
+        elif mode == 3:
+            mode_name = "Timer"
+        else:
+            mode_name = "ON"
+
         return {
-            "status":           d.get("Status"),
-            "flue_temp":        d.get("TempFume"),
-            "dhw_temp":         d.get("TempDHW"),
-            "fire_level":       d.get("FireLevel"),
-            "power_kw":         d.get("FPower"),
+            "status": d.get("Status"),
+            "mode": mode_name,
+            "flue_temp": d.get("TempFume"),
+            "dhw_temp": d.get("TempDHW"),
+            "fire_level": d.get("FireLevel"),
+            "power_kw": d.get("FPower"),
             "output_power_pct": d.get("OutputPower"),
-            "ch_pump":          d.get("CHPump"),
-            "dhw_pump":         d.get("DHWPump"),
+            "ch_pump": d.get("CHPump"),
+            "dhw_pump": d.get("DHWPump"),
             "fuel_consumed_kg": d.get("FuelConsum"),
-            "error_flag":       d.get("ErrorFlag"),
-            "command_pending":  self._command_pending,
+            "error_flag": d.get("ErrorFlag"),
+            "command_pending": self._command_pending,
             "status_name": STATUS_NAMES.get(d.get("Status", 0), f"Status {d.get('Status')}"),
         }
 
@@ -178,7 +211,7 @@ class NaturelaClimate(CoordinatorEntity, ClimateEntity):
     # ------------------------------------------------------------------
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Turn stove on or off."""
+        """Turn stove on or off while preserving the current fuel selection."""
         if hvac_mode == HVACMode.HEAT:
             self._command_pending = True
         else:
@@ -186,9 +219,14 @@ class NaturelaClimate(CoordinatorEntity, ClimateEntity):
 
         # Optimistic update so UI reflects the change immediately
         self._attr_hvac_mode = hvac_mode
+        self._attr_preset_mode = "none"
         self.async_write_ha_state()
 
-        state = STATE_ON if hvac_mode == HVACMode.HEAT else STATE_OFF
+        current_state = int(self.coordinator.data.get("State", STATE_OFF)) if self.coordinator.data else STATE_OFF
+        fuel = get_fuel_from_state(current_state)
+        new_mode = 2 if hvac_mode == HVACMode.HEAT else 0
+        state = pack_state(new_mode, fuel)
+
         try:
             success = await self._api.set_state(state)
             if not success:
@@ -197,6 +235,42 @@ class NaturelaClimate(CoordinatorEntity, ClimateEntity):
                 await self.coordinator.async_request_refresh()
         except Exception as err:  # noqa: BLE001
             _LOGGER.error("Error setting HVAC mode to %s: %s", hvac_mode, err)
+            self._command_pending = False
+            await self.coordinator.async_request_refresh()
+
+    async def async_set_preset_mode(self, preset_mode: str) -> None:
+        """Set the timer preset while preserving the current fuel selection.
+
+        When the timer is disabled, Home Assistant should fall back to OFF by
+        default instead of restoring a previous ON state.
+        """
+        if preset_mode not in PRESET_MODES:
+            raise ValueError(f"Unsupported preset mode: {preset_mode}")
+
+        current_state = int(self.coordinator.data.get("State", STATE_OFF)) if self.coordinator.data else STATE_OFF
+        fuel = get_fuel_from_state(current_state)
+
+        if preset_mode == "timer":
+            new_mode = 3
+            self._command_pending = True
+            self._attr_hvac_mode = HVACMode.HEAT
+        else:
+            new_mode = 0
+            self._command_pending = False
+            self._attr_hvac_mode = HVACMode.OFF
+
+        self._attr_preset_mode = preset_mode
+        self.async_write_ha_state()
+
+        state = pack_state(new_mode, fuel)
+        try:
+            success = await self._api.set_state(state)
+            if not success:
+                _LOGGER.error("Failed to set preset mode to %s", preset_mode)
+                self._command_pending = False
+                await self.coordinator.async_request_refresh()
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.error("Error setting preset mode to %s: %s", preset_mode, err)
             self._command_pending = False
             await self.coordinator.async_request_refresh()
 

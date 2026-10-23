@@ -13,11 +13,13 @@ DEFAULT_SCAN_INTERVAL = 30  # seconds
 # Naturela web UI (/#/device/{controller_type}/<id>).
 CONTROLLER_BURNERTOUCH = "burnertouch"   # NPBC_V6T_2 (BurnerTouch)
 CONTROLLER_BURNER = "burner"             # NPBC-V3C-1 and older
+CONTROLLER_BURNER_V4E_1N = "burner_v4e_1n"  # NPBC-V4E-1N (temporary clone of NPBC-V3C-1)
 DEFAULT_CONTROLLER = CONTROLLER_BURNERTOUCH
 
 CONTROLLER_MODELS = {
     CONTROLLER_BURNERTOUCH: "BurnerTouch (NPBC_V6T_2)",
     CONTROLLER_BURNER: "NPBC-V3C-1",
+    CONTROLLER_BURNER_V4E_1N: "NPBC-V4E-1N (clone of NPBC-V3C-1)",
 }
 # Back-compat alias used by climate/sensor/binary_sensor device_info.
 # Platforms may also call get_model(controller_type) for the precise name.
@@ -36,6 +38,10 @@ LOGIN_URL = f"{BASE_URL}/account/login"
 def build_api_urls(controller_type: str) -> tuple[str, str, str]:
     """Return (API_URL, SET_STATE_URL, SET_TEMP_URL) for a controller type."""
     ct = controller_type or DEFAULT_CONTROLLER
+    # Temporary compatibility alias: NPBC-V4E-1N behaves like the legacy
+    # NPBC-V3C-1 burner family while we add model-specific commands later.
+    if ct == CONTROLLER_BURNER_V4E_1N:
+        ct = CONTROLLER_BURNER
     return (
         f"{BASE_URL}/api/{ct}",
         f"{BASE_URL}/api/{ct}/setState",
@@ -48,10 +54,34 @@ def build_api_urls(controller_type: str) -> tuple[str, str, str]:
 API_URL, SET_STATE_URL, SET_TEMP_URL = build_api_urls(DEFAULT_CONTROLLER)
 
 # Device state values (confirmed by capturing Naturela web UI XHR requests)
-# The web UI sends {"deviceId": "<serial>", "state": 128} for ON
-# and {"deviceId": "<serial>", "state": 0} for OFF
+# The web UI encodes the burner state as a packed bitfield:
+#   - upper bits: mode  (OFF=0, ON=2, Timer=3)
+#   - lower bits: fuel  (1..4 => 0..3)
+# Example: ON + Fuel3 => (2<<6) | 2 = 130
 STATE_OFF = 0
-STATE_ON  = 128
+STATE_ON = 128
+STATE_TIMER = 192
+
+
+def get_mode_from_state(state: int) -> int:
+    """Return the burner mode bits from the packed state value."""
+    return (int(state) >> 6) & 0b11
+
+
+def get_fuel_from_state(state: int) -> int:
+    """Return the burner fuel bits from the packed state value."""
+    return int(state) & 0b11
+
+
+def fuel_to_display_value(fuel: int) -> int:
+    """Convert the raw 0..3 fuel index to the user-visible 1..4 range."""
+    return (int(fuel) & 0b11) + 1
+
+
+def pack_state(mode: int, fuel: int) -> int:
+    """Pack mode + fuel into the Naturela bitfield while preserving the intended values."""
+    return ((int(mode) & 0b11) << 6) | (int(fuel) & 0b11)
+
 
 # Status code labels.
 # These match LITERALLY what the Naturela controller and iot.naturela-bg.com
