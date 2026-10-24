@@ -19,7 +19,7 @@ DEFAULT_CONTROLLER = CONTROLLER_BURNERTOUCH
 CONTROLLER_MODELS = {
     CONTROLLER_BURNERTOUCH: "BurnerTouch (NPBC_V6T_2)",
     CONTROLLER_BURNER: "NPBC-V3C-1",
-    CONTROLLER_BURNER_V4E_1N: "NPBC-V4E-1N (clone of NPBC-V3C-1)",
+    CONTROLLER_BURNER_V4E_1N: "NPBC-V4E-1N",
 }
 # Back-compat alias used by climate/sensor/binary_sensor device_info.
 # Platforms may also call get_model(controller_type) for the precise name.

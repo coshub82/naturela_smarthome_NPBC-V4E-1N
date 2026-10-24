@@ -211,6 +211,7 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = [
         NaturelaStatusSensor(coordinator, device_id),
+        NaturelaThermostatStatusSensor(coordinator, device_id),
     ]
     entities += [
         NaturelaSensor(coordinator, device_id, desc)
@@ -322,6 +323,35 @@ class NaturelaStatusSensor(_NaturelaEntityBase, SensorEntity):
             return "Unknown"
 
         return label
+
+
+class NaturelaThermostatStatusSensor(_NaturelaEntityBase, SensorEntity):
+    """Expose the thermostat state with explicit Normal/Stop labels instead of heat on/off wording."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:thermostat"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["Normal", "Stop"]
+
+    def __init__(self, coordinator, device_id: int) -> None:
+        super().__init__(coordinator, device_id)
+        self._attr_unique_id = f"{DOMAIN}_{device_id}_thermostat_mode"
+        self._attr_name = "Thermostat"
+
+    @property
+    def native_value(self) -> str | None:
+        if not self.coordinator.data:
+            return None
+
+        thermostat = self.coordinator.data.get("Thermostat")
+        if thermostat is None:
+            return None
+
+        # Naturela reports `True` when the thermostat is stopping the burner.
+        # In Home Assistant we want the human-facing state to be:
+        #   - True -> "Stop"
+        #   - False -> "Normal"
+        return "Stop" if bool(thermostat) else "Normal"
 
 
 def _coerce_numeric(value):

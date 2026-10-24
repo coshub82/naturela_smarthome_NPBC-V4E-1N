@@ -111,4 +111,8 @@ class NaturelaBinarySensor(CoordinatorEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         if not self.coordinator.data:
             return None
-        return bool(self.coordinator.data.get(self.entity_description.api_key))
+
+        value = self.coordinator.data.get(self.entity_description.api_key)
+        if self.entity_description.api_key == "Thermostat":
+            return not bool(value)
+        return bool(value)
